@@ -1,4 +1,4 @@
-# Opam swtich
+# Opam switch
 _opam/
 
 # Build output directory
@@ -21,3 +21,39 @@ dev-tools.locks/
 
 # Development packages
 dev.opam
+
+# OCaml artifacts
+*.byte
+*.native
+*.o
+*.a
+*.so
+*.cm[ioax]
+*.cmxa
+*.annot
+*.install
+.merlin
+
+# Rust build artifacts
+target/
+**/*.rs.bk
+Cargo.lock
+**/bench/rust_baseline/target/
+**/bench/rust_baseline/Cargo.lock
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor/IDE specific files
+*.swp
+*.swo
+*~
+\#*\#
+.idea/
+*.iml
