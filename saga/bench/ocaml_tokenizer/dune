@@ -1,4 +1,4 @@
 (executable
  (name bench_tokenizer)
- (libraries saga saga.tokenizers unix str)
- (modules bench_tokenizer))
+ (modules bench_tokenizer)
+ (libraries saga ubench str))

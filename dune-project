@@ -78,24 +78,24 @@
   (datasets machine-learning data-science image-classification regression)))
 
 (package
- (name saga)
- (synopsis "Text processing and NLP extensions for Nx")
- (description
-  "Text processing library that extends Nx with natural language processing capabilities. Provides tokenization, encoding, and text manipulation functionality compatible with the Nx tensor library.")
- (depends
-  (ocaml
-   (>= 5.3.0))
-  dune
-  (nx
-   (= :version))
-  re
-  uutf
-  uucp
-  (yojson
-   (>= 2.0.0))
-  (alcotest :with-test))
- (tags
-  (text-processing nlp natural-language-processing tokenization)))
+  (name saga)
+  (synopsis "Text processing and NLP extensions for Nx")
+  (description
+   "Text processing library that extends Nx with natural language processing capabilities. Provides tokenization, encoding, and text manipulation functionality compatible with the Nx tensor library.")
+  (depends
+   (ocaml
+    (>= 5.3.0))
+   dune
+   (nx
+    (= :version))
+   re
+   uutf
+   uucp
+   (yojson
+    (>= 2.0.0))
+   (alcotest :with-test))
+  (tags
+   (text-processing nlp natural-language-processing tokenization)))
 
 (package
  (name talon)

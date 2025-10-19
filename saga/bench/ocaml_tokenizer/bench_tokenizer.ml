@@ -1,150 +1,69 @@
-module M = Saga_tokenizers.Models
-module W = Saga_tokenizers.Wordpiece
+open Ubench
+open Saga
 
-let batch_size = 1_000
+let batch_size = 1000
 
-let calculate_percentile latencies percentile =
-  let sorted = Array.copy latencies in
-  Array.sort Float.compare sorted;
-  let index = int_of_float (float_of_int (Array.length sorted) *. percentile /. 100.0) in
-  sorted.(index)
+let create_bert_tokenizer () =
+  let tokenizer = Tokenizer.create ~model:(Models.wordpiece ()) in
+  (* Add special tokens like BERT *)
+  let _ = Tokenizer.add_special_tokens tokenizer [
+    Either.Right (Added_token.create ~content:"[UNK]" ~special:true ());
+    Either.Right (Added_token.create ~content:"[SEP]" ~special:true ());
+    Either.Right (Added_token.create ~content:"[PAD]" ~special:true ());
+    Either.Right (Added_token.create ~content:"[CLS]" ~special:true ());
+    Either.Right (Added_token.create ~content:"[MASK]" ~special:true ());
+  ] in
+  (* Set up normalizer and pre-tokenizer like BERT *)
+  Tokenizer.set_normalizer tokenizer (Some (Normalizers.bert ()));
+  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.bert ()));
+  (* Set up post-processor like BERT *)
+  let sep_id = Tokenizer.token_to_id tokenizer "[SEP]" |> Option.get in
+  let cls_id = Tokenizer.token_to_id tokenizer "[CLS]" |> Option.get in
+  Tokenizer.set_post_processor tokenizer (Some (Processors.bert ~sep:("[SEP]", sep_id) ~cls:("[CLS]", cls_id) ()));
+  tokenizer
 
-let get_peak_rss () =
-  let cmd = Printf.sprintf "ps -o rss= -p %d" (Unix.getpid ()) in
-  let ic = Unix.open_process_in cmd in
-  let rss = float_of_string (input_line ic) /. 1024.0 in (* Convert KB to MB *)
-  let _ = Unix.close_process_in ic in
-  rss
+let bench_bert_encode () =
+  let tokenizer = create_bert_tokenizer () in
+  let data = In_channel.with_open_text "../../../saga/bench/data/test.txt" In_channel.input_all in
+  let lines = String.split_on_char '\n' data |> List.filter (fun s -> String.length s > 0) in
+  let lines = List.map (fun line -> Either.Left line) lines in
 
-let read_lines file =
-  let ic = open_in file in
-  let rec read_all acc =
-    try
-      let line = input_line ic in
-      read_all (line :: acc)
-    with End_of_file -> List.rev acc
-  in
-  let lines = read_all [] in
-  close_in ic;
-  lines
-
-let make_batches lines batch_size =
-  let rec split acc current = function
-    | [] -> if current <> [] then List.rev (List.rev current :: acc) else List.rev acc
-    | x :: xs when List.length current >= batch_size -> split (List.rev current :: acc) [x] xs
-    | x :: xs -> split acc (x :: current) xs
-  in
-  split [] [] lines
-
-let bench_encode_single tokenizer lines n =
-  let total_tokens = ref 0 in
-  let latencies = Array.make (n * List.length lines) 0.0 in
-  let idx = ref 0 in
-  
-  let start_total = Unix.gettimeofday () in
-  for _i = 0 to n - 1 do
+  let bench_encode_single () =
     List.iter (fun line ->
-      let start_time = Unix.gettimeofday () in
-      let tokens = W.tokenize tokenizer line in
-      let end_time = Unix.gettimeofday () in
-      latencies.(!idx) <- (end_time -. start_time) *. 1000.0; (* Convert to ms *)
-      total_tokens := !total_tokens + List.length tokens;
-      incr idx
+      let _ = Tokenizer.encode tokenizer ~sequence:line () in
+      ()
     ) lines
-  done;
-  let total_time = (Unix.gettimeofday () -. start_total) *. 1000.0 in (* Convert to ms *)
-
-  let total_time_secs = total_time /. 1000.0 in (* Convert ms to seconds *)
-  let data_size_mb = 
-    let total_chars = List.fold_left (fun acc s -> acc + String.length s) 0 lines in
-    float_of_int total_chars /. (1024.0 *. 1024.0)
   in
 
-  (* Calculate metrics *)
-  let tokens_per_sec = float_of_int !total_tokens /. total_time_secs in
-  let mb_per_sec = data_size_mb /. total_time_secs in
-  let p50 = calculate_percentile latencies 50.0 in
-  let p95 = calculate_percentile latencies 95.0 in
-  let p99 = calculate_percentile latencies 99.0 in
-
-  (tokens_per_sec, mb_per_sec, p50, p95, p99)
-
-let bench_encode_batch tokenizer batches n =
-  let total_tokens = ref 0 in
-  let latencies = Array.make (n * List.length batches) 0.0 in
-  let idx = ref 0 in
-  
-  let start_total = Unix.gettimeofday () in
-  for _i = 0 to n - 1 do
-    List.iter (fun batch ->
-      let start_time = Unix.gettimeofday () in
-      let token_lists = List.map (W.tokenize tokenizer) batch in
-      let end_time = Unix.gettimeofday () in
-      latencies.(!idx) <- (end_time -. start_time) *. 1000.0;
-      total_tokens := !total_tokens + List.fold_left (fun acc l -> acc + List.length l) 0 token_lists;
-      incr idx
-    ) batches
-  done;
-  let total_time = (Unix.gettimeofday () -. start_total) *. 1000.0 in (* Convert to ms *)
-
-  let total_time_secs = total_time /. 1000.0 in
-  let data_size_mb = 
-    let total_chars = List.fold_left (fun acc batch -> 
-      acc + List.fold_left (fun acc s -> acc + String.length s) 0 batch
-    ) 0 batches in
-    float_of_int total_chars /. (1024.0 *. 1024.0)
+  let bench_encode_batch () =
+    let rec process_batches remaining =
+      match remaining with
+      | [] -> ()
+      | _ ->
+          let batch_size = min batch_size (List.length remaining) in
+          let batch = List.take batch_size remaining in
+          let batch_input = List.map (fun x -> Either.Left x) batch in
+          let _ = Tokenizer.encode_batch tokenizer ~input:batch_input () in
+          process_batches (List.drop batch_size remaining)
+    in
+    process_batches lines
   in
 
-  (* Calculate metrics *)
-  let tokens_per_sec = float_of_int !total_tokens /. total_time_secs in
-  let mb_per_sec = data_size_mb /. total_time_secs in
-  let p50 = calculate_percentile latencies 50.0 in
-  let p95 = calculate_percentile latencies 95.0 in
-  let p99 = calculate_percentile latencies 99.0 in
+  let suite = [
+    bench "WordPiece BERT encode" bench_encode_single;
+    bench "WordPiece BERT encode batch" bench_encode_batch;
+  ] in
 
-  (tokens_per_sec, mb_per_sec, p50, p95, p99)
+  let config = Config.default |> Config.time_limit 2.0 |> Config.warmup 3 |> Config.build in
+  let results = run ~config suite in
+
+  Printf.printf "\n=== BERT Tokenizer Benchmarks ===\n";
+  List.iter (fun result ->
+    Printf.printf "%s: %.2f ns/op\n" result.name result.time_stats.avg
+  ) results
+
 
 let () =
-  (* Create the tokenizer *)
-  let tokenizer = W.from_file 
-    ~vocab_file:"../rust_baseline/data/bert-base-uncased-vocab.txt" in
-
-  (* Read input data *)
-  let lines = read_lines "../rust_baseline/data/big.txt" in
-  let batches = make_batches lines batch_size in
-  
-  (* Number of iterations *)
-  let n = 20 in
-
-  Printf.printf "\nFinal Benchmark Results\n";
-  Printf.printf "=====================\n";
-
-  (* Single encode benchmark *)
-  let (tokens_per_sec, mb_per_sec, p50, p95, p99) = bench_encode_single tokenizer lines n in
-  Printf.printf "\nSingle Encode Metrics:\n";
-  Printf.printf "---------------------\n";
-  Printf.printf "Throughput:\n";
-  Printf.printf "  - Tokens/second: %.2f\n" tokens_per_sec;
-  Printf.printf "  - MB/second: %.2f\n" mb_per_sec;
-  Printf.printf "Latency (ms):\n";
-  Printf.printf "  - p50: %.2f\n" p50;
-  Printf.printf "  - p95: %.2f\n" p95;
-  Printf.printf "  - p99: %.2f\n" p99;
-
-  (* Batch encode benchmark *)
-  let (tokens_per_sec, mb_per_sec, p50, p95, p99) = bench_encode_batch tokenizer batches n in
-  Printf.printf "\nBatch Encode Metrics:\n";
-  Printf.printf "---------------------\n";
-  Printf.printf "Throughput:\n";
-  Printf.printf "  - Tokens/second: %.2f\n" tokens_per_sec;
-  Printf.printf "  - MB/second: %.2f\n" mb_per_sec;
-  Printf.printf "Latency (ms):\n";
-  Printf.printf "  - p50: %.2f\n" p50;
-  Printf.printf "  - p95: %.2f\n" p95;
-  Printf.printf "  - p99: %.2f\n" p99;
-
-  (* Memory usage *)
-  let peak_rss = get_peak_rss () in
-  Printf.printf "\nMemory Usage:\n";
-  Printf.printf "-------------\n";
-  Printf.printf "Peak RSS: %.2f MB\n" peak_rss
+  bench_bert_encode ();
+  (* bench_train_small (); *)
+  (* bench_train_big () *)
